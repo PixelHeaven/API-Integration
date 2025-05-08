@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sourcegraph Code Explorer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Sourcegraph Code Explorer</h1>
+            <p>Search code across repositories using Sourcegraph's API</p>
+        </header>
+        
+        <div class="search-container">
+            <input type="text" id="searchQuery" placeholder="Enter a search query (e.g., 'func NewAuthenticator')">
+            <select id="languageFilter">
+                <option value="">All Languages</option>
+                <option value="lang:javascript">JavaScript</option>
+                <option value="lang:python">Python</option>
+                <option value="lang:go">Go</option>
+                <option value="lang:java">Java</option>
+                <option value="lang:typescript">TypeScript</option>
+                <option value="lang:rust">Rust</option>
+                <option value="lang:c++">C++</option>
+            </select>
+            <button id="searchButton">Search</button>
+        </div>
+        
+        <div class="results-container">
+            <h2>Search Results</h2>
+            <div id="resultsCount"></div>
+            <div id="results"></div>
+        </div>
+        
+        <div id="loading" class="loading-spinner hidden">
+            <div class="spinner"></div>
+            <p>Searching...</p>
+        </div>
+    </div>
+    
+    <footer>
+        <p>Powered by Sourcegraph API | <a href="https://docs.sourcegraph.com/api/graphql" target="_blank">API Documentation</a></p>
+    </footer>
+    
+    <script src="script.js"></script>
+</body>
+</html>
