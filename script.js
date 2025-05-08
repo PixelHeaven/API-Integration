@@ -223,6 +223,16 @@ document.addEventListener('DOMContentLoaded', function() {
             fullQuery += ' case:yes';
         }
         
+        // Map UI pattern type values to Sourcegraph API expected values
+        const patternTypeMap = {
+            'literal': 'LITERAL',
+            'regexp': 'REGEXP', 
+            'structural': 'STRUCTURAL'
+        };
+        
+        // Get the correct pattern type enum value
+        const patternType = patternTypeMap[params.patternType] || 'LITERAL';
+        
         const graphqlQuery = {
             query: `
             query Search($query: String!, $patternType: SearchPatternType!, $limit: Int!) {
@@ -270,7 +280,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }`,
             variables: {
                 query: fullQuery,
-                patternType: params.patternType.toUpperCase(),
+                patternType: patternType,  // Using the mapped value
                 limit: params.limit
             }
         };
@@ -1181,5 +1191,3 @@ document.addEventListener('DOMContentLoaded', function() {
                 day: 'numeric'
             });
         }
-    }
-});
