@@ -742,4 +742,444 @@ document.addEventListener('DOMContentLoaded', function() {
         if (appState.searchHistory.length === 0) {
             elements.searchHistory.innerHTML = `
                 <div class="empty-state">
-                    <i class="fas fa-
+                    <i class="fas fa-history"></i>
+                    <p>No search history yet</p>
+                </div>
+            `;
+            return;
+        }
+        
+        appState.searchHistory.forEach((item, index) => {
+            const historyItem = document.createElement('div');
+            historyItem.className = 'history-item';
+            
+            const formattedDate = formatDate(new Date(item.timestamp));
+            
+            historyItem.innerHTML = `
+                <div>
+                    <div class="history-query">${escapeHTML(item.query)}</div>
+                    <div class="history-meta">${formattedDate}</div>
+                </div>
+                <div class="history-actions">
+                    <button class="btn-icon history-use" title="Use this search">
+                        <i class="fas fa-arrow-right"></i>
+                    </button>
+                    <button class="btn-icon history-save" title="Save search">
+                        <i class="far fa-bookmark"></i>
+                    </button>
+                    <button class="btn-icon history-delete" title="Remove from history">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `;
+            
+            // Add event listeners
+            historyItem.querySelector('.history-use').addEventListener('click', () => {
+                useSearchFromHistory(item);
+            });
+            
+            historyItem.querySelector('.history-save').addEventListener('click', () => {
+                saveSearch(item);
+            });
+            
+            historyItem.querySelector('.history-delete').addEventListener('click', () => {
+                removeFromHistory(index);
+            });
+            
+            elements.searchHistory.appendChild(historyItem);
+        });
+    }
+    
+    function useSearchFromHistory(searchParams) {
+        // Fill the search form with the history item
+        elements.searchQuery.value = searchParams.query;
+        elements.languageFilter.value = searchParams.language || '';
+        elements.repoFilter.value = searchParams.repository || '';
+        elements.patternType.value = searchParams.patternType || 'literal';
+        elements.caseSensitive.checked = searchParams.caseSensitive || false;
+        elements.includeContext.checked = searchParams.includeContext !== undefined ? searchParams.includeContext : true;
+        elements.resultsLimit.value = searchParams.limit || appState.settings.defaultResultsLimit;
+        
+        // Perform the search
+        performSearch();
+    }
+    
+    function removeFromHistory(index) {
+        appState.searchHistory.splice(index, 1);
+        localStorage.setItem('searchHistory', JSON.stringify(appState.searchHistory));
+        updateSearchHistoryUI();
+        showToast('info', 'Removed', 'Search removed from history');
+    }
+    
+    function saveCurrentSearch() {
+        const searchParams = getSearchParams();
+        saveSearch(searchParams);
+    }
+    
+    function saveSearch(searchParams) {
+        // Check if already saved
+        const alreadySaved = appState.savedSearches.some(item => 
+            item.query === searchParams.query && 
+            item.language === searchParams.language && 
+            item.repository === searchParams.repository && 
+            item.patternType === searchParams.patternType && 
+            item.caseSensitive === searchParams.caseSensitive
+        );
+        
+        if (alreadySaved) {
+            showToast('info', 'Already Saved', 'This search is already in your saved searches');
+            return;
+        }
+        
+        // Add name to saved search
+        const savedSearch = { ...searchParams };
+        
+        // Prompt for a name
+        const name = prompt('Enter a name for this saved search:', searchParams.query.substring(0, 30));
+        if (!name) return; // User cancelled
+        
+        savedSearch.name = name;
+        
+        // Add to saved searches
+        appState.savedSearches.unshift(savedSearch);
+        
+        // Save to local storage
+        localStorage.setItem('savedSearches', JSON.stringify(appState.savedSearches));
+        
+        // Update UI
+        updateSavedSearchesUI();
+        showToast('success', 'Search Saved', 'Search has been saved');
+    }
+    
+    function updateSavedSearchesUI() {
+        elements.savedSearches.innerHTML = '';
+        
+        if (appState.savedSearches.length === 0) {
+            elements.savedSearches.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-bookmark"></i>
+                    <p>No saved searches yet</p>
+                </div>
+            `;
+            return;
+        }
+        
+        appState.savedSearches.forEach((item, index) => {
+            const savedItem = document.createElement('div');
+            savedItem.className = 'saved-item';
+            
+            savedItem.innerHTML = `
+                <div>
+                    <div class="saved-query">${escapeHTML(item.name || item.query)}</div>
+                    <div class="saved-meta">${escapeHTML(item.query)}</div>
+                </div>
+                <div class="saved-actions">
+                    <button class="btn-icon saved-use" title="Use this search">
+                        <i class="fas fa-arrow-right"></i>
+                    </button>
+                    <button class="btn-icon saved-delete" title="Remove saved search">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                </div>
+            `;
+            
+            // Add event listeners
+            savedItem.querySelector('.saved-use').addEventListener('click', () => {
+                useSearchFromHistory(item);
+            });
+            
+            savedItem.querySelector('.saved-delete').addEventListener('click', () => {
+                removeFromSaved(index);
+            });
+            
+            elements.savedSearches.appendChild(savedItem);
+        });
+    }
+    
+    function removeFromSaved(index) {
+        appState.savedSearches.splice(index, 1);
+        localStorage.setItem('savedSearches', JSON.stringify(appState.savedSearches));
+        updateSavedSearchesUI();
+        showToast('info', 'Removed', 'Search removed from saved searches');
+    }
+    
+    function loadSearchHistory() {
+        const storedHistory = localStorage.getItem('searchHistory');
+        if (storedHistory) {
+            try {
+                appState.searchHistory = JSON.parse(storedHistory);
+                updateSearchHistoryUI();
+            } catch (error) {
+                console.error('Error loading search history:', error);
+            }
+        }
+    }
+    
+    function loadSavedSearches() {
+        const storedSearches = localStorage.getItem('savedSearches');
+        if (storedSearches) {
+            try {
+                appState.savedSearches = JSON.parse(storedSearches);
+                updateSavedSearchesUI();
+            } catch (error) {
+                console.error('Error loading saved searches:', error);
+            }
+        }
+    }
+    
+    function toggleSidebar() {
+        document.body.classList.toggle('sidebar-collapsed');
+    }
+    
+    function toggleTheme() {
+        const currentTheme = appState.settings.theme;
+        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        setTheme(newTheme);
+    }
+    
+    function setTheme(theme) {
+        appState.settings.theme = theme;
+        applyTheme();
+        saveSettings();
+        updateThemeButtons(theme);
+    }
+    
+    function applyTheme() {
+        if (appState.settings.theme === 'dark') {
+            document.body.classList.add('dark-mode');
+            elements.themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+            elements.themeToggle.title = 'Switch to light mode';
+        } else {
+            document.body.classList.remove('dark-mode');
+            elements.themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
+            elements.themeToggle.title = 'Switch to dark mode';
+        }
+    }
+    
+    function updateThemeButtons(theme) {
+        document.querySelectorAll('.theme-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.theme === theme);
+        });
+    }
+    
+    function loadSettings() {
+        const storedSettings = localStorage.getItem('settings');
+        if (storedSettings) {
+            try {
+                appState.settings = { ...appState.settings, ...JSON.parse(storedSettings) };
+            } catch (error) {
+                console.error('Error loading settings:', error);
+            }
+        }
+    }
+    
+    function saveSettings() {
+        // Update settings from form inputs
+        if (elements.apiEndpoint.value) {
+            appState.settings.apiEndpoint = elements.apiEndpoint.value;
+        }
+        
+        if (elements.apiToken.value) {
+            appState.settings.apiToken = elements.apiToken.value;
+        }
+        
+        appState.settings.defaultCaseSensitive = elements.defaultCaseSensitive.checked;
+        appState.settings.defaultIncludeContext = elements.defaultIncludeContext.checked;
+        appState.settings.defaultResultsLimit = parseInt(elements.defaultResultsLimit.value);
+        appState.settings.codeFontSize = parseInt(elements.codeFontSize.value);
+        
+        // Save to local storage
+        localStorage.setItem('settings', JSON.stringify(appState.settings));
+        
+        // Apply settings
+        updateUIFromSettings();
+        
+        // Hide modal
+        hideModal(elements.settingsModal);
+        
+        showToast('success', 'Settings Saved', 'Your settings have been updated');
+    }
+    
+    function updateUIFromSettings() {
+        // Update form values
+        elements.apiEndpoint.value = appState.settings.apiEndpoint;
+        elements.apiToken.value = appState.settings.apiToken;
+        elements.defaultCaseSensitive.checked = appState.settings.defaultCaseSensitive;
+        elements.defaultIncludeContext.checked = appState.settings.defaultIncludeContext;
+        elements.defaultResultsLimit.value = appState.settings.defaultResultsLimit;
+        elements.codeFontSize.value = appState.settings.codeFontSize;
+        
+        // Set font size in UI
+        updateFontSize();
+        
+        // Set initial search form values
+        elements.caseSensitive.checked = appState.settings.defaultCaseSensitive;
+        elements.includeContext.checked = appState.settings.defaultIncludeContext;
+        elements.resultsLimit.value = appState.settings.defaultResultsLimit;
+    }
+    
+    function updateFontSize() {
+        const fontSize = elements.codeFontSize.value;
+        elements.fontSizeValue.textContent = fontSize + 'px';
+        
+        // Update CSS variable to apply font size across the app
+        document.documentElement.style.setProperty('--code-font-size', fontSize + 'px');
+        
+        // Apply to code preview
+        elements.codePreview.style.fontSize = fontSize + 'px';
+    }
+    
+    function showModal(modal) {
+        // Hide any existing modals
+        document.querySelectorAll('.modal.show').forEach(m => {
+            if (m !== modal) hideModal(m);
+        });
+        
+        // Show the modal
+        modal.classList.add('show');
+        
+        // Add event listener to close on outside click
+        setTimeout(() => {
+            modal.addEventListener('click', closeModalOnOutsideClick);
+        }, 10);
+        
+        // Prevent scrolling on body
+        document.body.style.overflow = 'hidden';
+    }
+    
+    function hideModal(modal) {
+        modal.classList.remove('show');
+        modal.removeEventListener('click', closeModalOnOutsideClick);
+        
+        // Restore scrolling
+        document.body.style.overflow = '';
+    }
+    
+    function closeModalOnOutsideClick(event) {
+        if (event.target === event.currentTarget) {
+            hideModal(event.currentTarget);
+        }
+    }
+    
+    function copyFilePath() {
+        const path = elements.copyFilePathBtn.dataset.path;
+        if (!path) return;
+        
+        navigator.clipboard.writeText(path)
+            .then(() => showToast('success', 'Copied!', `${path} copied to clipboard`))
+            .catch(() => showToast('error', 'Error', 'Failed to copy path'));
+    }
+    
+    function showToast(type, title, message) {
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        
+        let icon = 'info-circle';
+        if (type === 'success') icon = 'check-circle';
+        if (type === 'error') icon = 'exclamation-circle';
+        if (type === 'warning') icon = 'exclamation-triangle';
+        
+        toast.innerHTML = `
+            <div class="toast-icon">
+                <i class="fas fa-${icon}"></i>
+            </div>
+            <div class="toast-content">
+                <div class="toast-title">${title}</div>
+                <div class="toast-message">${message}</div>
+            </div>
+            <button class="toast-close">
+                <i class="fas fa-times"></i>
+            </button>
+        `;
+        
+        // Add to container
+        elements.toastContainer.appendChild(toast);
+        
+        // Add close button listener
+        toast.querySelector('.toast-close').addEventListener('click', () => {
+            removeToast(toast);
+        });
+        
+        // Auto remove after 5 seconds
+        setTimeout(() => {
+            removeToast(toast);
+        }, 5000);
+    }
+    
+    function removeToast(toast) {
+        toast.classList.add('removing');
+        setTimeout(() => {
+            toast.remove();
+        }, 300);
+    }
+    
+    function handleKeyboardShortcuts(e) {
+        // Command/Ctrl + / for keyboard shortcuts
+        if ((e.metaKey || e.ctrlKey) && e.key === '/') {
+            e.preventDefault();
+            showModal(elements.keyboardShortcutsModal);
+            return;
+        }
+        
+        // Command/Ctrl + , for settings
+        if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+            e.preventDefault();
+            showModal(elements.settingsModal);
+            return;
+        }
+        
+        // Escape to close modal
+        if (e.key === 'Escape') {
+            const openModal = document.querySelector('.modal.show');
+            if (openModal) {
+                hideModal(openModal);
+                return;
+            }
+        }
+        
+        // Command/Ctrl + K to focus search
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+            e.preventDefault();
+            elements.searchQuery.focus();
+            return;
+        }
+        
+        // Command/Ctrl + Enter to perform search
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+            if (document.activeElement === elements.searchQuery || 
+                document.activeElement === elements.languageFilter ||
+                document.activeElement === elements.repoFilter ||
+                document.activeElement === elements.patternType ||
+                document.activeElement === elements.resultsLimit) {
+                e.preventDefault();
+                performSearch();
+                return;
+            }
+        }
+    }
+    
+    function formatDate(date) {
+        const now = new Date();
+        const diff = Math.floor((now - date) / 1000); // Difference in seconds
+        
+        if (diff < 60) {
+            return 'just now';
+        } else if (diff < 3600) {
+            const minutes = Math.floor(diff / 60);
+            return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+        } else if (diff < 86400) { // 24 hours
+            const hours = Math.floor(diff / 3600);
+            return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+        } else if (diff < 604800) { // 7 days
+            const days = Math.floor(diff / 86400);
+            return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+        } else {
+            // Format as date
+            return date.toLocaleDateString(undefined, {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            });
+        }
+    }
+});
