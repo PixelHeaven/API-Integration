@@ -1,73 +1,262 @@
 document.addEventListener('DOMContentLoaded', function() {
-    const searchButton = document.getElementById('searchButton');
-    const searchQuery = document.getElementById('searchQuery');
-    const languageFilter = document.getElementById('languageFilter');
-    const resultsDiv = document.getElementById('results');
-    const resultsCount = document.getElementById('resultsCount');
-    const loadingDiv = document.getElementById('loading');
-    
-    // Add event listeners
-    searchButton.addEventListener('click', performSearch);
-    searchQuery.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            performSearch();
+    // Application state
+    const appState = {
+        currentPage: 1,
+        resultsPerPage: 20,
+        totalResults: 0,
+        searchHistory: [],
+        savedSearches: [],
+        settings: {
+            theme: 'light',
+            codeFontSize: 14,
+            apiEndpoint: 'https://sourcegraph.com/.api/graphql',
+            apiToken: '',
+            defaultCaseSensitive: false,
+            defaultIncludeContext: true,
+            defaultResultsLimit: 50
         }
-    });
+    };
+
+    // DOM Elements
+    const elements = {
+        // Theme toggle
+        themeToggle: document.getElementById('themeToggle'),
+        
+        // Search elements
+        searchQuery: document.getElementById('searchQuery'),
+        searchButton: document.getElementById('searchButton'),
+        clearSearch: document.getElementById('clearSearch'),
+        advancedOptionsToggle: document.getElementById('advancedOptionsToggle'),
+        advancedOptions: document.getElementById('advancedOptions'),
+        saveSearchBtn: document.getElementById('saveSearchBtn'),
+        searchTags: document.getElementById('searchTags'),
+        
+        // Filter elements
+        languageFilter: document.getElementById('languageFilter'),
+        repoFilter: document.getElementById('repoFilter'),
+        patternType: document.getElementById('patternType'),
+        resultsLimit: document.getElementById('resultsLimit'),
+        caseSensitive: document.getElementById('caseSensitive'),
+        includeContext: document.getElementById('includeContext'),
+        
+        // Results elements
+        resultsContainer: document.getElementById('resultsContainer'),
+        loading: document.getElementById('loading'),
+        emptyState: document.getElementById('emptyState'),
+        results: document.getElementById('results'),
+        resultsStats: document.getElementById('resultsStats'),
+        pagination: document.getElementById('pagination'),
+        sortOrder: document.getElementById('sortOrder'),
+        listView: document.getElementById('listView'),
+        gridView: document.getElementById('gridView'),
+        
+        // Sidebar elements
+        sidebarToggle: document.getElementById('sidebar-toggle'),
+        searchHistory: document.getElementById('searchHistory'),
+        savedSearches: document.getElementById('savedSearches'),
+        
+        // Modals
+        settingsBtn: document.getElementById('settingsBtn'),
+        settingsModal: document.getElementById('settingsModal'),
+        keyboardShortcutsModal: document.getElementById('keyboardShortcutsModal'),
+        codePreviewModal: document.getElementById('codePreviewModal'),
+        
+        // Settings elements
+        apiEndpoint: document.getElementById('apiEndpoint'),
+        apiToken: document.getElementById('apiToken'),
+        defaultCaseSensitive: document.getElementById('defaultCaseSensitive'),
+        defaultIncludeContext: document.getElementById('defaultIncludeContext'),
+        defaultResultsLimit: document.getElementById('defaultResultsLimit'),
+        codeFontSize: document.getElementById('codeFontSize'),
+        fontSizeValue: document.getElementById('fontSizeValue'),
+        saveSettings: document.getElementById('saveSettings'),
+        
+        // Code preview elements
+        codePreview: document.getElementById('codePreview'),
+        previewFileName: document.getElementById('previewFileName'),
+        previewRepoPath: document.getElementById('previewRepoPath'),
+        openInSourcegraph: document.getElementById('openInSourcegraph'),
+        copyFilePathBtn: document.getElementById('copyFilePathBtn'),
+        
+        // Toast container
+        toastContainer: document.getElementById('toastContainer')
+    };
+
+    // Initialize the application
+    initApp();
+    
+    /*
+     * Core Functions
+     */
+    
+    function initApp() {
+        loadSettings();
+        applyTheme();
+        setupEventListeners();
+        updateUIFromSettings();
+        loadSearchHistory();
+        loadSavedSearches();
+    }
+    
+    function setupEventListeners() {
+        // Theme toggle
+        elements.themeToggle.addEventListener('click', toggleTheme);
+        
+        // Search functionality
+        elements.searchButton.addEventListener('click', performSearch);
+        elements.searchQuery.addEventListener('keypress', e => {
+            if (e.key === 'Enter') performSearch();
+        });
+        elements.clearSearch.addEventListener('click', clearSearch);
+        elements.advancedOptionsToggle.addEventListener('click', toggleAdvancedOptions);
+        elements.saveSearchBtn.addEventListener('click', saveCurrentSearch);
+        
+        // Results view
+        elements.listView.addEventListener('click', () => switchView('list'));
+        elements.gridView.addEventListener('click', () => switchView('grid'));
+        elements.sortOrder.addEventListener('change', sortResults);
+        
+        // Sidebar toggle
+        elements.sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Settings modal
+        elements.settingsBtn.addEventListener('click', () => showModal(elements.settingsModal));
+        elements.saveSettings.addEventListener('click', saveSettings);
+        
+        // Theme buttons
+        document.querySelectorAll('.theme-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const theme = btn.dataset.theme;
+                setTheme(theme);
+                updateThemeButtons(theme);
+            });
+        });
+        
+        // Font size slider
+        elements.codeFontSize.addEventListener('input', updateFontSize);
+        
+        // Close modals
+        document.querySelectorAll('.close-modal').forEach(btn => {
+            btn.addEventListener('click', e => {
+                const modal = e.target.closest('.modal');
+                hideModal(modal);
+            });
+        });
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', handleKeyboardShortcuts);
+        
+        // Copy file path
+        elements.copyFilePathBtn.addEventListener('click', copyFilePath);
+    }
     
     function performSearch() {
-        const query = searchQuery.value.trim();
-        const langFilter = languageFilter.value;
-        
-        if (query === '') {
-            alert('Please enter a search query');
+        const query = elements.searchQuery.value.trim();
+        if (!query) {
+            showToast('error', 'Error', 'Please enter a search query');
             return;
         }
         
-        // Show loading spinner
-        loadingDiv.classList.remove('hidden');
-        resultsDiv.innerHTML = '';
-        resultsCount.textContent = '';
+        const searchParams = getSearchParams();
         
-        // Construct the full query
-        const fullQuery = langFilter ? `${query} ${langFilter}` : query;
+        // Show loading state
+        elements.emptyState.classList.add('hidden');
+        elements.results.innerHTML = '';
+        elements.loading.classList.remove('hidden');
+        elements.resultsStats.textContent = 'Searching...';
         
-        // Call the Sourcegraph API
-        fetchCodeResults(fullQuery)
+        // Add to search history
+        addToSearchHistory(searchParams);
+        
+        // Update search tags
+        updateSearchTags(searchParams);
+        
+        // Make API request
+        fetchSearchResults(searchParams)
             .then(data => {
-                loadingDiv.classList.add('hidden');
-                displayResults(data, query);
+                elements.loading.classList.add('hidden');
+                displayResults(data, searchParams);
             })
             .catch(error => {
-                loadingDiv.classList.add('hidden');
-                resultsDiv.innerHTML = `
-                    <div class="error">
-                        <p>Error fetching results: ${error.message}</p>
-                        <p>Please check your query and try again.</p>
+                elements.loading.classList.add('hidden');
+                elements.results.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <h3>An error occurred</h3>
+                        <p>${error.message}</p>
                     </div>
                 `;
+                elements.resultsStats.textContent = 'Error occurred';
+                showToast('error', 'Search Error', error.message);
             });
     }
     
-    async function fetchCodeResults(query) {
-        // Note: In a real application, you would use your Sourcegraph instance URL
-        // and appropriate authentication. This example uses the public Sourcegraph instance.
-        const sourcegraphUrl = 'https://sourcegraph.com/.api/graphql';
+    function getSearchParams() {
+        return {
+            query: elements.searchQuery.value.trim(),
+            language: elements.languageFilter.value,
+            repository: elements.repoFilter.value.trim(),
+            patternType: elements.patternType.value,
+            caseSensitive: elements.caseSensitive.checked,
+            includeContext: elements.includeContext.checked,
+            limit: parseInt(elements.resultsLimit.value),
+            page: appState.currentPage,
+            timestamp: new Date().toISOString()
+        };
+    }
+    
+    async function fetchSearchResults(params) {
+        const apiEndpoint = appState.settings.apiEndpoint;
+        
+        // Build the full query
+        let fullQuery = params.query;
+        
+        if (params.language) {
+            fullQuery += ` ${params.language}`;
+        }
+        
+        if (params.repository) {
+            fullQuery += ` repo:${params.repository}`;
+        }
+        
+        if (params.caseSensitive) {
+            fullQuery += ' case:yes';
+        }
         
         const graphqlQuery = {
             query: `
-            query Search($query: String!) {
-                search(query: $query, version: V2, patternType: literal) {
+            query Search($query: String!, $patternType: SearchPatternType!, $limit: Int!) {
+                search(query: $query, version: V2, patternType: $patternType, first: $limit) {
                     results {
-                        resultCount
+                        limitHit
+                        matchCount
+                        approximateResultCount
+                        missing {
+                            name
+                        }
+                        cloning {
+                            name
+                        }
+                        timedout {
+                            name
+                        }
                         results {
                             __typename
                             ... on FileMatch {
                                 repository {
                                     name
+                                    url
                                 }
                                 file {
                                     path
                                     url
+                                    content
+                                    commit {
+                                        oid
+                                        author {
+                                            date
+                                        }
+                                    }
                                 }
                                 lineMatches {
                                     lineNumber
@@ -80,86 +269,72 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }`,
             variables: {
-                query: query
+                query: fullQuery,
+                patternType: params.patternType.toUpperCase(),
+                limit: params.limit
             }
         };
         
-        const response = await fetch(sourcegraphUrl, {
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        
+        // Add API token if available
+        if (appState.settings.apiToken) {
+            headers['Authorization'] = `token ${appState.settings.apiToken}`;
+        }
+        
+        const response = await fetch(apiEndpoint, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                // Note: For authenticated requests, you would include an authorization header
-                // 'Authorization': 'token YOUR_SOURCEGRAPH_TOKEN'
-            },
+            headers: headers,
             body: JSON.stringify(graphqlQuery)
         });
         
         if (!response.ok) {
-            throw new Error(`API request failed: ${response.status}`);
+            const errorText = await response.text();
+            throw new Error(`API request failed: ${response.status} - ${errorText}`);
         }
         
-        return await response.json();
+        const data = await response.json();
+        
+        if (data.errors && data.errors.length > 0) {
+            throw new Error(`GraphQL Error: ${data.errors[0].message}`);
+        }
+        
+        return data;
     }
     
-    function displayResults(data, originalQuery) {
+    function displayResults(data, searchParams) {
         if (!data.data || !data.data.search || !data.data.search.results) {
-            resultsDiv.innerHTML = '<p>No results found or invalid response format.</p>';
+            elements.results.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-search"></i>
+                    <h3>No results found</h3>
+                    <p>Try adjusting your search query or filters</p>
+                </div>
+            `;
+            elements.resultsStats.textContent = 'No results found';
             return;
         }
         
-        const results = data.data.search.results;
-        const count = results.resultCount;
+        const searchResults = data.data.search.results;
+        const matchCount = searchResults.matchCount || 0;
+        const approximateCount = searchResults.approximateResultCount || 0;
+        const isLimitHit = searchResults.limitHit || false;
         
-        resultsCount.textContent = `Found ${count} result${count !== 1 ? 's' : ''}`;
+        // Update application state
+        appState.totalResults = approximateCount;
         
-        if (count === 0) {
-            resultsDiv.innerHTML = '<p>No matching code found. Try a different search query.</p>';
-            return;
+        // Update results stats
+        let statsText = `Found ${matchCount} ${matchCount === 1 ? 'match' : 'matches'}`;
+        if (isLimitHit) {
+            statsText += ' (limit hit)';
         }
+        elements.resultsStats.textContent = statsText;
         
-        const resultItems = results.results;
-        resultItems.forEach(item => {
-            if (item.__typename === 'FileMatch') {
-                const repo = item.repository.name;
-                const filePath = item.file.path;
-                const fileUrl = item.file.url;
-                
-                const resultItem = document.createElement('div');
-                resultItem.className = 'result-item';
-                
-                let content = `
-                    <h3><a href="https://sourcegraph.com${fileUrl}" target="_blank">${filePath}</a></h3>
-                    <div class="result-repo">Repository: ${repo}</div>
-                    <div class="result-path">Path: ${filePath}</div>
-                `;
-                
-                if (item.lineMatches && item.lineMatches.length > 0) {
-                    content += '<div class="code">';
-                    
-                    item.lineMatches.forEach(lineMatch => {
-                        const lineNumber = lineMatch.lineNumber;
-                        let preview = lineMatch.preview;
-                        
-                        // Highlight the matching parts
-                        if (lineMatch.offsetAndLengths && lineMatch.offsetAndLengths.length > 0) {
-                            for (let i = lineMatch.offsetAndLengths.length - 1; i >= 0; i--) {
-                                const [offset, length] = lineMatch.offsetAndLengths[i];
-                                const before = preview.substring(0, offset);
-                                const match = preview.substring(offset, offset + length);
-                                const after = preview.substring(offset + length);
-                                preview = before + `<span class="highlight">${match}</span>` + after;
-                            }
-                        }
-                        
-                        content += `<div>${lineNumber}: ${preview}</div>`;
-                    });
-                    
-                    content += '</div>';
-                }
-                
-                resultItem.innerHTML = content;
-                resultsDiv.appendChild(resultItem);
-            }
-        });
-    }
-});
+        // Check if we have results
+        const results = searchResults.results;
+        if (!results || results.length === 0) {
+            elements.results.innerHTML = `
+                <div class="empty-state">
+                    ...
