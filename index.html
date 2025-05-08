@@ -3,47 +3,346 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sourcegraph Code Explorer</title>
+    <title>Advanced Sourcegraph Code Explorer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css">
     <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
 </head>
-<body>
-    <div class="container">
-        <header>
-            <h1>Sourcegraph Code Explorer</h1>
-            <p>Search code across repositories using Sourcegraph's API</p>
-        </header>
-        
-        <div class="search-container">
-            <input type="text" id="searchQuery" placeholder="Enter a search query (e.g., 'func NewAuthenticator')">
-            <select id="languageFilter">
-                <option value="">All Languages</option>
-                <option value="lang:javascript">JavaScript</option>
-                <option value="lang:python">Python</option>
-                <option value="lang:go">Go</option>
-                <option value="lang:java">Java</option>
-                <option value="lang:typescript">TypeScript</option>
-                <option value="lang:rust">Rust</option>
-                <option value="lang:c++">C++</option>
-            </select>
-            <button id="searchButton">Search</button>
-        </div>
-        
-        <div class="results-container">
-            <h2>Search Results</h2>
-            <div id="resultsCount"></div>
-            <div id="results"></div>
-        </div>
-        
-        <div id="loading" class="loading-spinner hidden">
-            <div class="spinner"></div>
-            <p>Searching...</p>
+<body class="light-mode">
+    <div class="app-container">
+        <nav class="top-nav">
+            <div class="logo">
+                <img src="https://sourcegraph.com/.assets/img/sourcegraph-mark.svg" alt="Sourcegraph Logo">
+                <h1>Code Explorer</h1>
+            </div>
+            <div class="top-nav-items">
+                <button id="themeToggle" class="btn-icon" title="Toggle dark mode">
+                    <i class="fas fa-moon"></i>
+                </button>
+                <a href="https://docs.sourcegraph.com/api/graphql" target="_blank" class="btn-icon" title="API Documentation">
+                    <i class="fas fa-book"></i>
+                </a>
+                <button id="settingsBtn" class="btn-icon" title="Settings">
+                    <i class="fas fa-cog"></i>
+                </button>
+            </div>
+        </nav>
+
+        <main class="main-content">
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <h3>Search History</h3>
+                    <div id="searchHistory" class="search-history">
+                        <!-- Search history will be populated here -->
+                        <div class="empty-state">
+                            <i class="fas fa-history"></i>
+                            <p>Your search history will appear here</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="sidebar-section">
+                    <h3>Saved Searches</h3>
+                    <div id="savedSearches" class="saved-searches">
+                        <!-- Saved searches will be populated here -->
+                        <div class="empty-state">
+                            <i class="fas fa-star"></i>
+                            <p>Your saved searches will appear here</p>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <div class="content-area">
+                <section class="search-section">
+                    <div class="search-container">
+                        <div class="search-input-wrapper">
+                            <i class="fas fa-search search-icon"></i>
+                            <input type="text" id="searchQuery" placeholder="Search code (e.g., 'func NewAuthenticator')">
+                            <button id="clearSearch" class="clear-btn" title="Clear search">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        
+                        <button id="searchButton" class="primary-btn">
+                            <i class="fas fa-search"></i> Search
+                        </button>
+
+                        <button id="advancedOptionsToggle" class="secondary-btn" title="Show advanced options">
+                            <i class="fas fa-sliders-h"></i>
+                        </button>
+                        
+                        <button id="saveSearchBtn" class="secondary-btn" title="Save this search">
+                            <i class="far fa-star"></i>
+                        </button>
+                    </div>
+
+                    <div id="advancedOptions" class="advanced-options hidden">
+                        <div class="option-row">
+                            <div class="option-group">
+                                <label for="languageFilter">Language</label>
+                                <select id="languageFilter" class="select-input">
+                                    <option value="">All Languages</option>
+                                    <option value="lang:javascript">JavaScript</option>
+                                    <option value="lang:typescript">TypeScript</option>
+                                    <option value="lang:python">Python</option>
+                                    <option value="lang:go">Go</option>
+                                    <option value="lang:java">Java</option>
+                                    <option value="lang:c">C</option>
+                                    <option value="lang:cpp">C++</option>
+                                    <option value="lang:csharp">C#</option>
+                                    <option value="lang:ruby">Ruby</option>
+                                    <option value="lang:php">PHP</option>
+                                    <option value="lang:rust">Rust</option>
+                                    <option value="lang:swift">Swift</option>
+                                    <option value="lang:kotlin">Kotlin</option>
+                                </select>
+                            </div>
+                            
+                            <div class="option-group">
+                                <label for="repoFilter">Repository</label>
+                                <input type="text" id="repoFilter" class="text-input" placeholder="e.g., github.com/org/repo">
+                            </div>
+                            
+                            <div class="option-group">
+                                <label for="patternType">Pattern Type</label>
+                                <select id="patternType" class="select-input">
+                                    <option value="literal">Literal</option>
+                                    <option value="regexp">Regular Expression</option>
+                                    <option value="structural">Structural</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="option-row">
+                            <div class="option-group">
+                                <label for="resultsLimit">Results Limit</label>
+                                <select id="resultsLimit" class="select-input">
+                                    <option value="20">20</option>
+                                    <option value="50">50</option>
+                                    <option value="100">100</option>
+                                    <option value="200">200</option>
+                                </select>
+                            </div>
+                            
+                            <div class="option-group checkbox-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="caseSensitive">
+                                    <span>Case Sensitive</span>
+                                </label>
+                            </div>
+                            
+                            <div class="option-group checkbox-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="includeContext">
+                                    <span>Show Context</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="searchTags" class="search-tags">
+                        <!-- Active filters will appear here -->
+                    </div>
+                </section>
+
+                <section class="results-section">
+                    <div class="results-header">
+                        <h2>Search Results</h2>
+                        <div id="resultsStats" class="results-stats">
+                            <!-- Results count will be shown here -->
+                        </div>
+                        <div class="results-actions">
+                            <select id="sortOrder" class="select-input">
+                                <option value="relevance">Sort by Relevance</option>
+                                <option value="newest">Sort by Newest</option>
+                                <option value="oldest">Sort by Oldest</option>
+                            </select>
+                            
+                            <div class="view-options">
+                                <button id="listView" class="view-btn active" title="List view">
+                                    <i class="fas fa-list"></i>
+                                </button>
+                                <button id="gridView" class="view-btn" title="Grid view">
+                                    <i class="fas fa-th-large"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="resultsContainer" class="results-container list-view">
+                        <div id="loading" class="loading-state hidden">
+                            <div class="spinner"></div>
+                            <p>Searching across repositories...</p>
+                        </div>
+                        
+                        <div id="emptyState" class="empty-state">
+                            <i class="fas fa-search"></i>
+                            <h3>Start by searching for code</h3>
+                            <p>Use the search bar above to find code across repositories</p>
+                        </div>
+                        
+                        <div id="results" class="results-list">
+                            <!-- Results will be populated here -->
+                        </div>
+                        
+                        <div id="pagination" class="pagination hidden">
+                            <!-- Pagination controls will appear here -->
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <div id="sidebar-toggle" class="sidebar-toggle">
+            <i class="fas fa-chevron-left"></i>
         </div>
     </div>
-    
-    <footer>
-        <p>Powered by Sourcegraph API | <a href="https://docs.sourcegraph.com/api/graphql" target="_blank">API Documentation</a></p>
-    </footer>
-    
+
+    <!-- Modals -->
+    <div id="settingsModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="close-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h3>Appearance</h3>
+                    <div class="setting-item">
+                        <span>Theme</span>
+                        <div class="theme-options">
+                            <button class="theme-btn light-theme-btn" data-theme="light">Light</button>
+                            <button class="theme-btn dark-theme-btn" data-theme="dark">Dark</button>
+                            <button class="theme-btn system-theme-btn" data-theme="system">System</button>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <span>Code Font Size</span>
+                        <div class="range-control">
+                            <input type="range" min="12" max="20" value="14" id="codeFontSize">
+                            <span id="fontSizeValue">14px</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3>API Configuration</h3>
+                    <div class="setting-item">
+                        <label for="apiEndpoint">Sourcegraph URL</label>
+                        <input type="text" id="apiEndpoint" class="text-input" value="https://sourcegraph.com/.api/graphql" placeholder="https://sourcegraph.yourcompany.com/.api/graphql">
+                    </div>
+                    <div class="setting-item">
+                        <label for="apiToken">API Token (optional)</label>
+                        <input type="password" id="apiToken" class="text-input" placeholder="Your Sourcegraph API token">
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3>Default Search Options</h3>
+                    <div class="setting-item">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="defaultCaseSensitive">
+                            <span>Case sensitive search</span>
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="defaultIncludeContext">
+                            <span>Show context around matches</span>
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <label for="defaultResultsLimit">Default results limit</label>
+                        <select id="defaultResultsLimit" class="select-input">
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="saveSettings" class="primary-btn">Save Settings</button>
+                <button class="secondary-btn close-modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="keyboardShortcutsModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Keyboard Shortcuts</h2>
+                <button class="close-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="shortcuts-list">
+                    <div class="shortcut-item">
+                        <span class="key">/</span>
+                        <span class="description">Focus search bar</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <span class="key">Ctrl + Enter</span>
+                        <span class="description">Execute search</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <span class="key">Esc</span>
+                        <span class="description">Clear search / Close dialogs</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <span class="key">Ctrl + S</span>
+                        <span class="description">Save current search</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <span class="key">Ctrl + ,</span>
+                        <span class="description">Open settings</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <span class="key">Ctrl + L</span>
+                        <span class="description">Toggle theme</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <span class="key">Ctrl + [</span>
+                        <span class="description">Toggle sidebar</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <span class="key">?</span>
+                        <span class="description">Show this help</span>
+                    </div>
+        </div>
+    </div>
+
+    <div id="codePreviewModal" class="modal hidden">
+        <div class="modal-content fullscreen-modal">
+            <div class="modal-header">
+                <div class="file-info">
+                    <span id="previewFileName">filename.ext</span>
+                    <span class="repo-path" id="previewRepoPath">owner/repo</span>
+                </div>
+                <div class="modal-actions">
+                    <a id="openInSourcegraph" href="#" target="_blank" class="btn-icon" title="Open in Sourcegraph">
+                        <i class="fas fa-external-link-alt"></i>
+                    </a>
+                    <button id="copyFilePathBtn" class="btn-icon" title="Copy file path">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                    <button class="close-modal btn-icon"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+            <div class="modal-body code-preview-body">
+                <div id="codePreview" class="code-preview"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/go.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/typescript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/python.min.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
