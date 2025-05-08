@@ -148,6 +148,22 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Copy file path
         elements.copyFilePathBtn.addEventListener('click', copyFilePath);
+        
+        // Add focus event for search
+        document.addEventListener('keydown', e => {
+            if (e.key === '/' && !isInputFocused()) {
+                e.preventDefault();
+                elements.searchQuery.focus();
+            }
+        });
+    }
+    
+    function isInputFocused() {
+        const activeElement = document.activeElement;
+        return activeElement.tagName === 'INPUT' || 
+               activeElement.tagName === 'TEXTAREA' || 
+               activeElement.tagName === 'SELECT' ||
+               activeElement.isContentEditable;
     }
     
     function performSearch() {
@@ -164,6 +180,9 @@ document.addEventListener('DOMContentLoaded', function() {
         elements.results.innerHTML = '';
         elements.loading.classList.remove('hidden');
         elements.resultsStats.textContent = 'Searching...';
+        
+        // Reset pagination to first page
+        appState.currentPage = 1;
         
         // Add to search history
         addToSearchHistory(searchParams);
@@ -188,6 +207,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 `;
                 elements.resultsStats.textContent = 'Error occurred';
                 showToast('error', 'Search Error', error.message);
+                console.error('Search error:', error);
             });
     }
     
@@ -199,123 +219,115 @@ document.addEventListener('DOMContentLoaded', function() {
             patternType: elements.patternType.value,
             caseSensitive: elements.caseSensitive.checked,
             includeContext: elements.includeContext.checked,
-            limit: parseInt(elements.resultsLimit.value),
+            limit: parseInt(elements.resultsLimit.value) || 50,
             page: appState.currentPage,
             timestamp: new Date().toISOString()
         };
     }
     
     async function fetchSearchResults(params) {
-        const apiEndpoint = appState.settings.apiEndpoint;
-        
-        // Build the full query
-        let fullQuery = params.query;
-        
-        if (params.language) {
-            fullQuery += ` ${params.language}`;
-        }
-        
-        if (params.repository) {
-            fullQuery += ` repo:${params.repository}`;
-        }
-        
-        if (params.caseSensitive) {
-            fullQuery += ' case:yes';
-        }
-        
-        // Map UI pattern type values to Sourcegraph API expected values
-        const patternTypeMap = {
-            'literal': 'LITERAL',
-            'regexp': 'REGEXP', 
-            'structural': 'STRUCTURAL'
-        };
-        
-        // Get the correct pattern type enum value
-        const patternType = patternTypeMap[params.patternType] || 'LITERAL';
-        
-        const graphqlQuery = {
-            query: `
-            query Search($query: String!, $patternType: SearchPatternType!, $limit: Int!) {
-                search(query: $query, version: V2, patternType: $patternType, first: $limit) {
-                    results {
-                        limitHit
-                        matchCount
-                        approximateResultCount
-                        missing {
-                            name
-                        }
-                        cloning {
-                            name
-                        }
-                        timedout {
-                            name
-                        }
+        try {
+            const apiEndpoint = appState.settings.apiEndpoint || 'https://sourcegraph.com/.api/graphql';
+            
+            // Build the search query string with all parameters
+            let fullQuery = params.query;
+            
+            if (params.language) {
+                fullQuery += ` ${params.language}`;
+            }
+            
+            if (params.repository) {
+                fullQuery += ` repo:${params.repository}`;
+            }
+            
+            if (params.caseSensitive) {
+                fullQuery += ' case:yes';
+            }
+            
+            // Add pattern type directly to the query string if not literal (default)
+            if (params.patternType === 'regexp') {
+                fullQuery += ' patternType:regexp';
+            } else if (params.patternType === 'structural') {
+                fullQuery += ' patternType:structural';
+            }
+            
+            // Simplify the query and remove the "first" parameter that's causing problems
+            const graphqlQuery = {
+                query: `
+                query Search($query: String!) {
+                    search(query: $query) {
                         results {
-                            __typename
-                            ... on FileMatch {
-                                repository {
-                                    name
-                                    url
-                                }
-                                file {
-                                    path
-                                    url
-                                    content
-                                    commit {
-                                        oid
-                                        author {
-                                            date
+                            matchCount
+                            limitHit
+                            approximateResultCount
+                            results {
+                                __typename
+                                ... on FileMatch {
+                                    repository {
+                                        name
+                                        url
+                                    }
+                                    file {
+                                        path
+                                        url
+                                        content
+                                        commit {
+                                            oid
+                                            author {
+                                                date
+                                            }
                                         }
                                     }
-                                }
-                                lineMatches {
-                                    lineNumber
-                                    offsetAndLengths
-                                    preview
+                                    lineMatches {
+                                        lineNumber
+                                        offsetAndLengths
+                                        preview
+                                    }
                                 }
                             }
                         }
                     }
+                }`,
+                variables: {
+                    query: fullQuery
                 }
-            }`,
-            variables: {
-                query: fullQuery,
-                patternType: patternType,  // Using the mapped value
-                limit: params.limit
+            };
+            
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+            
+            // Add API token if available
+            if (appState.settings.apiToken) {
+                headers['Authorization'] = `token ${appState.settings.apiToken}`;
             }
-        };
-        
-        const headers = {
-            'Content-Type': 'application/json'
-        };
-        
-        // Add API token if available
-        if (appState.settings.apiToken) {
-            headers['Authorization'] = `token ${appState.settings.apiToken}`;
+            
+            const response = await fetch(apiEndpoint, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(graphqlQuery)
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API request failed: ${response.status} - ${errorText}`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.errors && data.errors.length > 0) {
+                throw new Error(`GraphQL Error: ${data.errors[0].message}`);
+            }
+            
+            return data;
+        } catch (error) {
+            console.error('Search API error:', error);
+            throw new Error(error.message || 'Failed to fetch search results');
         }
-        
-        const response = await fetch(apiEndpoint, {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(graphqlQuery)
-        });
-        
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`API request failed: ${response.status} - ${errorText}`);
-        }
-        
-        const data = await response.json();
-        
-        if (data.errors && data.errors.length > 0) {
-            throw new Error(`GraphQL Error: ${data.errors[0].message}`);
-        }
-        
-        return data;
     }
     
     function displayResults(data, searchParams) {
-        if (!data.data || !data.data.search || !data.data.search.results) {
+        if (!data || !data.data || !data.data.search || !data.data.search.results) {
             elements.results.innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-search"></i>
@@ -358,7 +370,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Display results
         elements.results.innerHTML = '';
         results.forEach(result => {
-            if (result.__typename === 'FileMatch') {
+            if (result && result.__typename === 'FileMatch') {
                 const fileMatch = createFileMatchElement(result, searchParams.includeContext);
                 elements.results.appendChild(fileMatch);
             }
@@ -377,9 +389,15 @@ document.addEventListener('DOMContentLoaded', function() {
         const file = result.file;
         const lineMatches = result.lineMatches;
         
-        const repoName = repository.name;
-        const filePath = file.path;
-        const fileUrl = file.url;
+        // Handle potential null values to prevent errors
+        if (!repository || !file) {
+            console.error('Invalid result structure:', result);
+            return document.createElement('div'); // Return empty div to avoid breaking the app
+        }
+        
+        const repoName = repository.name || 'unknown-repo';
+        const filePath = file.path || 'unknown-path';
+        const fileUrl = file.url || '#';
         
         // Create result card element
         const resultCard = document.createElement('div');
@@ -400,378 +418,401 @@ document.addEventListener('DOMContentLoaded', function() {
         const codePreview = document.createElement('div');
         codePreview.className = 'result-match';
         
-        // Format line matches with syntax highlighting
-        let matchesHtml = '';
+                // Format line matches with syntax highlighting
+                let matchesHtml = '';
         
-        if (lineMatches && lineMatches.length > 0) {
-            const contextLines = includeContext ? 2 : 0;
-            
-            // Get unique line numbers from matches
-            const matchedLines = new Set();
-            lineMatches.forEach(match => matchedLines.add(match.lineNumber));
-            
-            // Expand with context lines
-            const linesToShow = new Set(matchedLines);
-            if (contextLines > 0) {
-                matchedLines.forEach(lineNum => {
-                    for (let i = Math.max(1, lineNum - contextLines); i <= lineNum + contextLines; i++) {
-                        linesToShow.add(i);
+                if (lineMatches && lineMatches.length > 0) {
+                    const contextLines = includeContext ? 2 : 0;
+                    
+                    // Get unique line numbers from matches
+                    const matchedLines = new Set();
+                    lineMatches.forEach(match => {
+                        if (match && typeof match.lineNumber === 'number') {
+                            matchedLines.add(match.lineNumber);
+                        }
+                    });
+                    
+                    // Expand with context lines
+                    const linesToShow = new Set(matchedLines);
+                    if (contextLines > 0) {
+                        matchedLines.forEach(lineNum => {
+                            for (let i = Math.max(1, lineNum - contextLines); i <= lineNum + contextLines; i++) {
+                                linesToShow.add(i);
+                            }
+                        });
                     }
-                });
-            }
-            
-            // Convert to sorted array
-            const sortedLines = Array.from(linesToShow).sort((a, b) => a - b);
-            
-            // Create HTML with line numbers and highlights
-            const fileContent = file.content ? file.content.split('\n') : [];
-            let lastLineShown = 0;
-            
-            sortedLines.forEach(lineNum => {
-                // Add a separator if lines are not consecutive
-                if (lastLineShown > 0 && lineNum > lastLineShown + 1) {
-                    matchesHtml += `<div class="line-separator">...</div>`;
+                    
+                    // Convert to sorted array
+                    const sortedLines = Array.from(linesToShow).sort((a, b) => a - b);
+                    
+                    // Create HTML with line numbers and highlights
+                    const fileContent = file.content ? file.content.split('\n') : [];
+                    let lastLineShown = 0;
+                    
+                    sortedLines.forEach(lineNum => {
+                        // Add a separator if lines are not consecutive
+                        if (lastLineShown > 0 && lineNum > lastLineShown + 1) {
+                            matchesHtml += `<div class="line-separator">...</div>`;
+                        }
+                        
+                        const lineContent = fileContent[lineNum - 1] || '';
+                        const isMatchedLine = matchedLines.has(lineNum);
+                        
+                        // Find highlights for this line
+                        let highlightedLine = lineContent;
+                        
+                        if (isMatchedLine) {
+                            const match = lineMatches.find(m => m.lineNumber === lineNum);
+                            if (match && match.offsetAndLengths && Array.isArray(match.offsetAndLengths)) {
+                                // Apply highlights
+                                highlightedLine = applyHighlights(lineContent, match.offsetAndLengths);
+                            }
+                        }
+                        
+                        // Escape HTML for security (already done in applyHighlights)
+                        if (!isMatchedLine) {
+                            highlightedLine = escapeHTML(highlightedLine);
+                        }
+                        
+                        const lineClass = isMatchedLine ? 'matched-line' : 'context-line';
+                        matchesHtml += `
+                            <div class="code-line ${lineClass}">
+                                <span class="line-number">${lineNum}</span>
+                                <span class="line-content">${highlightedLine}</span>
+                            </div>
+                        `;
+                        
+                        lastLineShown = lineNum;
+                    });
                 }
                 
-                const lineContent = fileContent[lineNum - 1] || '';
-                const isMatchedLine = matchedLines.has(lineNum);
+                codePreview.innerHTML = matchesHtml || '<div class="no-matches">No preview available</div>';
+                content.appendChild(codePreview);
                 
-                // Find highlights for this line
-                let highlightedLine = lineContent;
+                // Create footer with metadata and actions
+                const footer = document.createElement('div');
+                footer.className = 'result-footer';
                 
-                if (isMatchedLine) {
-                    const match = lineMatches.find(m => m.lineNumber === lineNum);
-                    if (match && match.offsetAndLengths) {
-                        // Apply highlights
-                        highlightedLine = applyHighlights(lineContent, match.offsetAndLengths);
-                    }
-                }
+                const commitDate = file.commit && file.commit.author ? new Date(file.commit.author.date) : null;
+                const formattedDate = commitDate ? formatDate(commitDate) : 'Unknown date';
                 
-                // Escape HTML for security (already done in applyHighlights)
-                if (!isMatchedLine) {
-                    highlightedLine = escapeHTML(highlightedLine);
-                }
-                
-                const lineClass = isMatchedLine ? 'matched-line' : 'context-line';
-                matchesHtml += `
-                    <div class="code-line ${lineClass}">
-                        <span class="line-number">${lineNum}</span>
-                        <span class="line-content">${highlightedLine}</span>
+                footer.innerHTML = `
+                    <div class="result-meta">
+                        Last updated: ${formattedDate}
+                    </div>
+                    <div class="result-actions">
+                        <button class="btn-icon view-file-btn" title="View file">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <a href="${fileUrl}" target="_blank" class="btn-icon" title="Open in Sourcegraph">
+                            <i class="fas fa-external-link-alt"></i>
+                        </a>
+                        <button class="btn-icon copy-path-btn" title="Copy file path" data-path="${repoName}/${filePath}">
+                            <i class="fas fa-copy"></i>
+                        </button>
                     </div>
                 `;
                 
-                lastLineShown = lineNum;
-            });
-        }
-        
-        codePreview.innerHTML = matchesHtml;
-        content.appendChild(codePreview);
-        
-        // Create footer with metadata and actions
-        const footer = document.createElement('div');
-        footer.className = 'result-footer';
-        
-        const commitDate = file.commit && file.commit.author ? new Date(file.commit.author.date) : null;
-        const formattedDate = commitDate ? formatDate(commitDate) : 'Unknown date';
-        
-        footer.innerHTML = `
-            <div class="result-meta">
-                Last updated: ${formattedDate}
-            </div>
-            <div class="result-actions">
-                <button class="btn-icon view-file-btn" title="View file">
-                    <i class="fas fa-eye"></i>
-                </button>
-                <a href="${fileUrl}" target="_blank" class="btn-icon" title="Open in Sourcegraph">
-                    <i class="fas fa-external-link-alt"></i>
-                </a>
-                <button class="btn-icon copy-path-btn" title="Copy file path" data-path="${repoName}/${filePath}">
-                    <i class="fas fa-copy"></i>
-                </button>
-            </div>
-        `;
-        
-        // Assemble the card
-        resultCard.appendChild(header);
-        resultCard.appendChild(content);
-        resultCard.appendChild(footer);
-        
-        // Add event listeners
-        const viewFileBtn = resultCard.querySelector('.view-file-btn');
-        viewFileBtn.addEventListener('click', () => {
-            viewFile(repoName, filePath, fileUrl, file.content);
-        });
-        
-        const copyPathBtn = resultCard.querySelector('.copy-path-btn');
-        copyPathBtn.addEventListener('click', (e) => {
-            const path = e.currentTarget.dataset.path;
-            navigator.clipboard.writeText(path)
-                .then(() => showToast('success', 'Copied!', `${path} copied to clipboard`))
-                .catch(() => showToast('error', 'Error', 'Failed to copy path'));
-        });
-        
-        return resultCard;
-    }
-    
-    function applyHighlights(text, highlights) {
-        // Escape HTML in the original text
-        const escapedText = escapeHTML(text);
-        
-        // Sort highlights by offset in descending order to avoid position shifts
-        const sortedHighlights = [...highlights].sort((a, b) => b[0] - a[0]);
-        
-        // Apply highlights from end to start
-        let highlightedText = escapedText;
-        for (const [offset, length] of sortedHighlights) {
-            const beforeHighlight = highlightedText.substring(0, offset);
-            const highlighted = highlightedText.substring(offset, offset + length);
-            const afterHighlight = highlightedText.substring(offset + length);
+                // Assemble the card
+                resultCard.appendChild(header);
+                resultCard.appendChild(content);
+                resultCard.appendChild(footer);
+                
+                // Add event listeners
+                const viewFileBtn = resultCard.querySelector('.view-file-btn');
+                viewFileBtn.addEventListener('click', () => {
+                    viewFile(repoName, filePath, fileUrl, file.content);
+                });
+                
+                const copyPathBtn = resultCard.querySelector('.copy-path-btn');
+                copyPathBtn.addEventListener('click', (e) => {
+                    const path = e.currentTarget.dataset.path;
+                    navigator.clipboard.writeText(path)
+                        .then(() => showToast('success', 'Copied!', `${path} copied to clipboard`))
+                        .catch(() => showToast('error', 'Error', 'Failed to copy path'));
+                });
+                
+                return resultCard;
+            }
             
-            highlightedText = beforeHighlight + 
-                              `<span class="highlight">${highlighted}</span>` + 
-                              afterHighlight;
-        }
-        
-        return highlightedText;
-    }
-    
-    function escapeHTML(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-    
-    function viewFile(repoName, filePath, fileUrl, content) {
-        // Prepare the content
-        const fileExtension = filePath.split('.').pop().toLowerCase();
-        const fileName = filePath.split('/').pop();
-        
-        // Update modal elements
-        elements.previewFileName.textContent = fileName;
-        elements.previewRepoPath.textContent = repoName;
-        elements.openInSourcegraph.href = fileUrl;
-        
-        // Store file path for copying
-        elements.copyFilePathBtn.dataset.path = `${repoName}/${filePath}`;
-        
-        // Set up the code preview with syntax highlighting
-        if (content) {
-            let codeHTML = `<pre><code class="language-${fileExtension}">${escapeHTML(content)}</code></pre>`;
-            elements.codePreview.innerHTML = codeHTML;
+            function applyHighlights(text, highlights) {
+                if (!text || !highlights || !Array.isArray(highlights)) {
+                    return escapeHTML(text || '');
+                }
+                
+                // Escape HTML in the original text
+                const escapedText = escapeHTML(text);
+                
+                // Sort highlights by offset in descending order to avoid position shifts
+                const sortedHighlights = [...highlights].sort((a, b) => b[0] - a[0]);
+                
+                // Apply highlights from end to start
+                let highlightedText = escapedText;
+                for (const highlightArray of sortedHighlights) {
+                    if (Array.isArray(highlightArray) && highlightArray.length >= 2) {
+                        const offset = highlightArray[0];
+                        const length = highlightArray[1];
+                        
+                        if (typeof offset === 'number' && typeof length === 'number' && 
+                            offset >= 0 && offset + length <= highlightedText.length) {
+                            const beforeHighlight = highlightedText.substring(0, offset);
+                            const highlighted = highlightedText.substring(offset, offset + length);
+                            const afterHighlight = highlightedText.substring(offset + length);
+                            
+                            highlightedText = beforeHighlight + 
+                                            `<span class="highlight">${highlighted}</span>` + 
+                                            afterHighlight;
+                        }
+                    }
+                }
+                
+                return highlightedText;
+            }
             
-            // Apply syntax highlighting
-            document.querySelectorAll('pre code').forEach((block) => {
-                hljs.highlightElement(block);
-            });
-        } else {
-            elements.codePreview.innerHTML = '<div class="empty-state"><i class="fas fa-file-alt"></i><p>Content not available for preview</p></div>';
-        }
-        
-        // Show the modal
-        showModal(elements.codePreviewModal);
-    }
-    
-    function updatePagination() {
-        const totalPages = Math.ceil(appState.totalResults / appState.resultsPerPage);
-        
-        if (totalPages <= 1) {
-            elements.pagination.classList.add('hidden');
-            return;
-        }
-        
-        elements.pagination.classList.remove('hidden');
-        elements.pagination.innerHTML = '';
-        
-        // Previous button
-        const prevBtn = document.createElement('button');
-        prevBtn.className = 'page-btn';
-        prevBtn.innerHTML = '<i class="fas fa-chevron-left"></i>';
-        prevBtn.disabled = appState.currentPage === 1;
-        prevBtn.addEventListener('click', () => {
-            if (appState.currentPage > 1) {
-                appState.currentPage--;
+            function escapeHTML(text) {
+                if (!text) return '';
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+            
+            function viewFile(repoName, filePath, fileUrl, content) {
+                // Prepare the content
+                const fileExtension = filePath.split('.').pop().toLowerCase();
+                const fileName = filePath.split('/').pop();
+                
+                // Update modal elements
+                elements.previewFileName.textContent = fileName;
+                elements.previewRepoPath.textContent = repoName;
+                elements.openInSourcegraph.href = fileUrl;
+                
+                // Store file path for copying
+                elements.copyFilePathBtn.dataset.path = `${repoName}/${filePath}`;
+                
+                // Set up the code preview with syntax highlighting
+                if (content) {
+                    let codeHTML = `<pre><code class="language-${fileExtension}">${escapeHTML(content)}</code></pre>`;
+                    elements.codePreview.innerHTML = codeHTML;
+                    
+                    // Apply syntax highlighting
+                    setTimeout(() => {
+                        document.querySelectorAll('pre code').forEach((block) => {
+                            hljs.highlightElement(block);
+                        });
+                    }, 0);
+                } else {
+                    elements.codePreview.innerHTML = '<div class="empty-state"><i class="fas fa-file-alt"></i><p>Content not available for preview</p></div>';
+                }
+                
+                // Show the modal
+                showModal(elements.codePreviewModal);
+            }
+            
+            function updatePagination() {
+                const totalPages = Math.ceil(appState.totalResults / appState.resultsPerPage);
+                
+                if (totalPages <= 1) {
+                    elements.pagination.classList.add('hidden');
+                    return;
+                }
+                
+                elements.pagination.classList.remove('hidden');
+                elements.pagination.innerHTML = '';
+                
+                // Previous button
+                const prevBtn = document.createElement('button');
+                prevBtn.className = 'page-btn';
+                prevBtn.innerHTML = '<i class="fas fa-chevron-left"></i>';
+                prevBtn.disabled = appState.currentPage === 1;
+                prevBtn.addEventListener('click', () => {
+                    if (appState.currentPage > 1) {
+                        appState.currentPage--;
+                        performSearch();
+                    }
+                });
+                elements.pagination.appendChild(prevBtn);
+                
+                // Page buttons
+                const maxButtons = 5;
+                const startPage = Math.max(1, appState.currentPage - Math.floor(maxButtons / 2));
+                const endPage = Math.min(totalPages, startPage + maxButtons - 1);
+                
+                for (let i = startPage; i <= endPage; i++) {
+                    const pageBtn = document.createElement('button');
+                    pageBtn.className = 'page-btn' + (i === appState.currentPage ? ' active' : '');
+                    pageBtn.textContent = i;
+                    pageBtn.addEventListener('click', () => {
+                        appState.currentPage = i;
+                        performSearch();
+                    });
+                    elements.pagination.appendChild(pageBtn);
+                }
+                
+                // Next button
+                const nextBtn = document.createElement('button');
+                nextBtn.className = 'page-btn';
+                nextBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+                nextBtn.disabled = appState.currentPage === totalPages;
+                nextBtn.addEventListener('click', () => {
+                    if (appState.currentPage < totalPages) {
+                        appState.currentPage++;
+                        performSearch();
+                    }
+                });
+                elements.pagination.appendChild(nextBtn);
+            }
+            
+            function updateSearchTags(params) {
+                elements.searchTags.innerHTML = '';
+                
+                // Add tags for each active filter
+                if (params.language) {
+                    addSearchTag('Language: ' + params.language.replace('lang:', ''), () => {
+                        elements.languageFilter.value = '';
+                        performSearch();
+                    });
+                }
+                
+                if (params.repository) {
+                    addSearchTag('Repository: ' + params.repository, () => {
+                        elements.repoFilter.value = '';
+                        performSearch();
+                    });
+                }
+                
+                if (params.patternType !== 'literal') {
+                    addSearchTag('Pattern: ' + params.patternType, () => {
+                        elements.patternType.value = 'literal';
+                        performSearch();
+                    });
+                }
+                
+                if (params.caseSensitive) {
+                    addSearchTag('Case sensitive', () => {
+                        elements.caseSensitive.checked = false;
+                        performSearch();
+                    });
+                }
+            }
+            
+            function addSearchTag(text, removeCallback) {
+                const tag = document.createElement('div');
+                tag.className = 'search-tag';
+                tag.innerHTML = `
+                    ${text}
+                    <i class="fas fa-times"></i>
+                `;
+                
+                tag.querySelector('i').addEventListener('click', removeCallback);
+                elements.searchTags.appendChild(tag);
+            }
+            
+            function switchView(view, performSwitch = true) {
+                if (view === 'grid') {
+                    elements.resultsContainer.classList.remove('list-view');
+                    elements.resultsContainer.classList.add('grid-view');
+                    elements.listView.classList.remove('active');
+                    elements.gridView.classList.add('active');
+                } else {
+                    elements.resultsContainer.classList.remove('grid-view');
+                    elements.resultsContainer.classList.add('list-view');
+                    elements.listView.classList.add('active');
+                    elements.gridView.classList.remove('active');
+                }
+            }
+            
+            function sortResults() {
+                // This would re-fetch or re-sort the current results
+                // For now, just re-perform the search
                 performSearch();
             }
-        });
-        elements.pagination.appendChild(prevBtn);
-        
-        // Page buttons
-        const maxButtons = 5;
-        const startPage = Math.max(1, appState.currentPage - Math.floor(maxButtons / 2));
-        const endPage = Math.min(totalPages, startPage + maxButtons - 1);
-        
-        for (let i = startPage; i <= endPage; i++) {
-            const pageBtn = document.createElement('button');
-            pageBtn.className = 'page-btn' + (i === appState.currentPage ? ' active' : '');
-            pageBtn.textContent = i;
-            pageBtn.addEventListener('click', () => {
-                appState.currentPage = i;
-                performSearch();
-            });
-            elements.pagination.appendChild(pageBtn);
-        }
-        
-        // Next button
-        const nextBtn = document.createElement('button');
-        nextBtn.className = 'page-btn';
-        nextBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
-        nextBtn.disabled = appState.currentPage === totalPages;
-        nextBtn.addEventListener('click', () => {
-            if (appState.currentPage < totalPages) {
-                appState.currentPage++;
-                performSearch();
+            
+            function toggleAdvancedOptions() {
+                elements.advancedOptions.classList.toggle('hidden');
+                
+                // Update button icon
+                const icon = elements.advancedOptionsToggle.querySelector('i');
+                if (elements.advancedOptions.classList.contains('hidden')) {
+                    icon.className = 'fas fa-sliders-h';
+                } else {
+                    icon.className = 'fas fa-chevron-up';
+                }
             }
-        });
-        elements.pagination.appendChild(nextBtn);
-    }
-    
-    function updateSearchTags(params) {
-        elements.searchTags.innerHTML = '';
-        
-        // Add tags for each active filter
-        if (params.language) {
-            addSearchTag('Language: ' + params.language.replace('lang:', ''), () => {
+            
+            function clearSearch() {
+                elements.searchQuery.value = '';
                 elements.languageFilter.value = '';
-                performSearch();
-            });
-        }
-        
-        if (params.repository) {
-            addSearchTag('Repository: ' + params.repository, () => {
                 elements.repoFilter.value = '';
-                performSearch();
-            });
-        }
-        
-        if (params.patternType !== 'literal') {
-            addSearchTag('Pattern: ' + params.patternType, () => {
                 elements.patternType.value = 'literal';
-                performSearch();
-            });
-        }
-        
-        if (params.caseSensitive) {
-            addSearchTag('Case sensitive', () => {
-                elements.caseSensitive.checked = false;
-                performSearch();
-            });
-        }
-    }
-    
-    function addSearchTag(text, removeCallback) {
-        const tag = document.createElement('div');
-        tag.className = 'search-tag';
-        tag.innerHTML = `
-            ${text}
-            <i class="fas fa-times"></i>
-        `;
-        
-        tag.querySelector('i').addEventListener('click', removeCallback);
-        elements.searchTags.appendChild(tag);
-    }
-    
-    function switchView(view, performSwitch = true) {
-        if (view === 'grid') {
-            elements.resultsContainer.classList.remove('list-view');
-            elements.resultsContainer.classList.add('grid-view');
-            elements.listView.classList.remove('active');
-            elements.gridView.classList.add('active');
-        } else {
-            elements.resultsContainer.classList.remove('grid-view');
-            elements.resultsContainer.classList.add('list-view');
-            elements.listView.classList.add('active');
-            elements.gridView.classList.remove('active');
-        }
-    }
-    
-    function sortResults() {
-        // This would re-fetch or re-sort the current results
-        // For now, just re-perform the search
-        performSearch();
-    }
-    
-    function toggleAdvancedOptions() {
-        elements.advancedOptions.classList.toggle('hidden');
-        
-        // Update button icon
-        const icon = elements.advancedOptionsToggle.querySelector('i');
-        if (elements.advancedOptions.classList.contains('hidden')) {
-            icon.className = 'fas fa-sliders-h';
-        } else {
-            icon.className = 'fas fa-chevron-up';
-        }
-    }
-    
-    function clearSearch() {
-        elements.searchQuery.value = '';
-        elements.languageFilter.value = '';
-        elements.repoFilter.value = '';
-        elements.patternType.value = 'literal';
-        elements.resultsLimit.value = appState.settings.defaultResultsLimit;
-        elements.caseSensitive.checked = appState.settings.defaultCaseSensitive;
-        elements.includeContext.checked = appState.settings.defaultIncludeContext;
-        
-        elements.searchTags.innerHTML = '';
-        elements.results.innerHTML = '';
-        elements.resultsStats.textContent = '';
-        elements.pagination.classList.add('hidden');
-        elements.emptyState.classList.remove('hidden');
-        
-        // Focus the search input
-        elements.searchQuery.focus();
-    }
-    
-    function addToSearchHistory(searchParams) {
-        // Remove duplicates
-        appState.searchHistory = appState.searchHistory.filter(item => 
-            item.query !== searchParams.query || 
-            item.language !== searchParams.language || 
-            item.repository !== searchParams.repository || 
-            item.patternType !== searchParams.patternType || 
-            item.caseSensitive !== searchParams.caseSensitive
-        );
-        
-        // Add new item to the beginning
-        appState.searchHistory.unshift(searchParams);
-        
-        // Limit history size
-        if (appState.searchHistory.length > 20) {
-            appState.searchHistory.pop();
-        }
-        
-        // Update local storage
-        localStorage.setItem('searchHistory', JSON.stringify(appState.searchHistory));
-        
-        // Update UI
-        updateSearchHistoryUI();
-    }
-    
-    function updateSearchHistoryUI() {
-        elements.searchHistory.innerHTML = '';
-        
-        if (appState.searchHistory.length === 0) {
-            elements.searchHistory.innerHTML = `
-                <div class="empty-state">
-                    <i class="fas fa-history"></i>
-                    <p>No search history yet</p>
-                </div>
-            `;
-            return;
-        }
-        
-        appState.searchHistory.forEach((item, index) => {
-            const historyItem = document.createElement('div');
-            historyItem.className = 'history-item';
+                elements.resultsLimit.value = appState.settings.defaultResultsLimit;
+                elements.caseSensitive.checked = appState.settings.defaultCaseSensitive;
+                elements.includeContext.checked = appState.settings.defaultIncludeContext;
+                
+                elements.searchTags.innerHTML = '';
+                elements.results.innerHTML = '';
+                elements.resultsStats.textContent = '';
+                elements.pagination.classList.add('hidden');
+                elements.emptyState.classList.remove('hidden');
+                
+                // Focus the search input
+                elements.searchQuery.focus();
+            }
             
-            const formattedDate = formatDate(new Date(item.timestamp));
+            function addToSearchHistory(searchParams) {
+                // Remove duplicates
+                appState.searchHistory = appState.searchHistory.filter(item => 
+                    item.query !== searchParams.query || 
+                    item.language !== searchParams.language || 
+                    item.repository !== searchParams.repository || 
+                    item.patternType !== searchParams.patternType || 
+                    item.caseSensitive !== searchParams.caseSensitive
+                );
+                
+                // Add new item to the beginning
+                appState.searchHistory.unshift(searchParams);
+                
+                // Limit history size
+                if (appState.searchHistory.length > 20) {
+                    appState.searchHistory.pop();
+                }
+                
+                // Update local storage
+                try {
+                    localStorage.setItem('searchHistory', JSON.stringify(appState.searchHistory));
+                } catch (error) {
+                    console.error('Failed to save search history to localStorage:', error);
+                }
+                
+                // Update UI
+                updateSearchHistoryUI();
+            }
             
-            historyItem.innerHTML = `
-                <div>
-                    <div class="history-query">${escapeHTML(item.query)}</div>
-                    <div class="history-meta">${formattedDate}</div>
-                </div>
-                <div class="history-actions">
-                    <button class="btn-icon history-use" title="Use this search">
+            function updateSearchHistoryUI() {
+                elements.searchHistory.innerHTML = '';
+                
+                if (appState.searchHistory.length === 0) {
+                    elements.searchHistory.innerHTML = `
+                        <div class="empty-state">
+                            <i class="fas fa-history"></i>
+                            <p>No search history yet</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                appState.searchHistory.forEach((item, index) => {
+                    const historyItem = document.createElement('div');
+                    historyItem.className = 'history-item';
+                    
+                    const formattedDate = formatDate(new Date(item.timestamp));
+                    
+                    historyItem.innerHTML = `
+                        <div>
+                            <div class="history-query">${escapeHTML(item.query)}</div>
+                            <div class="history-meta">${formattedDate}</div>
+                        </div>
+                        <div class="history-actions">
+                                                <button class="btn-icon history-use" title="Use this search">
                         <i class="fas fa-arrow-right"></i>
                     </button>
                     <button class="btn-icon history-save" title="Save search">
@@ -801,22 +842,33 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function useSearchFromHistory(searchParams) {
-        // Fill the search form with the history item
-        elements.searchQuery.value = searchParams.query;
-        elements.languageFilter.value = searchParams.language || '';
-        elements.repoFilter.value = searchParams.repository || '';
-        elements.patternType.value = searchParams.patternType || 'literal';
-        elements.caseSensitive.checked = searchParams.caseSensitive || false;
-        elements.includeContext.checked = searchParams.includeContext !== undefined ? searchParams.includeContext : true;
-        elements.resultsLimit.value = searchParams.limit || appState.settings.defaultResultsLimit;
-        
-        // Perform the search
-        performSearch();
+        try {
+            // Fill the search form with the history item
+            elements.searchQuery.value = searchParams.query || '';
+            elements.languageFilter.value = searchParams.language || '';
+            elements.repoFilter.value = searchParams.repository || '';
+            elements.patternType.value = searchParams.patternType || 'literal';
+            elements.caseSensitive.checked = searchParams.caseSensitive || false;
+            elements.includeContext.checked = searchParams.includeContext !== undefined ? searchParams.includeContext : true;
+            elements.resultsLimit.value = searchParams.limit || appState.settings.defaultResultsLimit;
+            
+            // Perform the search
+            performSearch();
+        } catch (error) {
+            console.error('Error using search from history:', error);
+            showToast('error', 'Error', 'Failed to load search from history');
+        }
     }
     
     function removeFromHistory(index) {
+        if (index < 0 || index >= appState.searchHistory.length) return;
+        
         appState.searchHistory.splice(index, 1);
-        localStorage.setItem('searchHistory', JSON.stringify(appState.searchHistory));
+        try {
+            localStorage.setItem('searchHistory', JSON.stringify(appState.searchHistory));
+        } catch (error) {
+            console.error('Failed to save updated history to localStorage:', error);
+        }
         updateSearchHistoryUI();
         showToast('info', 'Removed', 'Search removed from history');
     }
@@ -854,7 +906,13 @@ document.addEventListener('DOMContentLoaded', function() {
         appState.savedSearches.unshift(savedSearch);
         
         // Save to local storage
-        localStorage.setItem('savedSearches', JSON.stringify(appState.savedSearches));
+        try {
+            localStorage.setItem('savedSearches', JSON.stringify(appState.savedSearches));
+        } catch (error) {
+            console.error('Failed to save to localStorage:', error);
+            showToast('error', 'Error', 'Failed to save search. Local storage might be full.');
+            return;
+        }
         
         // Update UI
         updateSavedSearchesUI();
@@ -907,38 +965,58 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function removeFromSaved(index) {
+        if (index < 0 || index >= appState.savedSearches.length) return;
+        
         appState.savedSearches.splice(index, 1);
-        localStorage.setItem('savedSearches', JSON.stringify(appState.savedSearches));
+        try {
+            localStorage.setItem('savedSearches', JSON.stringify(appState.savedSearches));
+        } catch (error) {
+            console.error('Failed to save updated searches to localStorage:', error);
+        }
         updateSavedSearchesUI();
         showToast('info', 'Removed', 'Search removed from saved searches');
     }
     
     function loadSearchHistory() {
-        const storedHistory = localStorage.getItem('searchHistory');
-        if (storedHistory) {
-            try {
+        try {
+            const storedHistory = localStorage.getItem('searchHistory');
+            if (storedHistory) {
                 appState.searchHistory = JSON.parse(storedHistory);
                 updateSearchHistoryUI();
-            } catch (error) {
-                console.error('Error loading search history:', error);
             }
+        } catch (error) {
+            console.error('Error loading search history:', error);
+            // Initialize with empty array if loading fails
+            appState.searchHistory = [];
+            updateSearchHistoryUI();
         }
     }
     
     function loadSavedSearches() {
-        const storedSearches = localStorage.getItem('savedSearches');
-        if (storedSearches) {
-            try {
+        try {
+            const storedSearches = localStorage.getItem('savedSearches');
+            if (storedSearches) {
                 appState.savedSearches = JSON.parse(storedSearches);
                 updateSavedSearchesUI();
-            } catch (error) {
-                console.error('Error loading saved searches:', error);
             }
+        } catch (error) {
+            console.error('Error loading saved searches:', error);
+            // Initialize with empty array if loading fails
+            appState.savedSearches = [];
+            updateSavedSearchesUI();
         }
     }
     
     function toggleSidebar() {
         document.body.classList.toggle('sidebar-collapsed');
+        
+        // Update icon direction
+        const icon = elements.sidebarToggle.querySelector('i');
+        if (document.body.classList.contains('sidebar-collapsed')) {
+            icon.className = 'fas fa-chevron-right';
+        } else {
+            icon.className = 'fas fa-chevron-left';
+        }
     }
     
     function toggleTheme() {
@@ -973,41 +1051,52 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function loadSettings() {
-        const storedSettings = localStorage.getItem('settings');
-        if (storedSettings) {
-            try {
+        try {
+            const storedSettings = localStorage.getItem('settings');
+            if (storedSettings) {
                 appState.settings = { ...appState.settings, ...JSON.parse(storedSettings) };
-            } catch (error) {
-                console.error('Error loading settings:', error);
             }
+            
+            // Check if we should apply system theme preference
+            if (appState.settings.theme === 'system') {
+                const prefersDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                appState.settings.theme = prefersDarkMode ? 'dark' : 'light';
+            }
+        } catch (error) {
+            console.error('Error loading settings:', error);
         }
     }
     
     function saveSettings() {
-        // Update settings from form inputs
-        if (elements.apiEndpoint.value) {
-            appState.settings.apiEndpoint = elements.apiEndpoint.value;
+        try {
+            // Update settings from form inputs
+            if (elements.apiEndpoint.value) {
+                appState.settings.apiEndpoint = elements.apiEndpoint.value;
+            }
+            
+            if (elements.apiToken.value) {
+                appState.settings.apiToken = elements.apiToken.value;
+            }
+            
+            appState.settings.defaultCaseSensitive = elements.defaultCaseSensitive.checked;
+            appState.settings.defaultIncludeContext = elements.defaultIncludeContext.checked;
+            appState.settings.defaultResultsLimit = parseInt(elements.defaultResultsLimit.value) || 50;
+            appState.settings.codeFontSize = parseInt(elements.codeFontSize.value) || 14;
+            
+            // Save to local storage
+            localStorage.setItem('settings', JSON.stringify(appState.settings));
+            
+            // Apply settings
+            updateUIFromSettings();
+            
+            // Hide modal
+            hideModal(elements.settingsModal);
+            
+            showToast('success', 'Settings Saved', 'Your settings have been updated');
+        } catch (error) {
+            console.error('Error saving settings:', error);
+            showToast('error', 'Error', 'Failed to save settings. Please try again.');
         }
-        
-        if (elements.apiToken.value) {
-            appState.settings.apiToken = elements.apiToken.value;
-        }
-        
-        appState.settings.defaultCaseSensitive = elements.defaultCaseSensitive.checked;
-        appState.settings.defaultIncludeContext = elements.defaultIncludeContext.checked;
-        appState.settings.defaultResultsLimit = parseInt(elements.defaultResultsLimit.value);
-        appState.settings.codeFontSize = parseInt(elements.codeFontSize.value);
-        
-        // Save to local storage
-        localStorage.setItem('settings', JSON.stringify(appState.settings));
-        
-        // Apply settings
-        updateUIFromSettings();
-        
-        // Hide modal
-        hideModal(elements.settingsModal);
-        
-        showToast('success', 'Settings Saved', 'Your settings have been updated');
     }
     
     function updateUIFromSettings() {
@@ -1037,6 +1126,11 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Apply to code preview
         elements.codePreview.style.fontSize = fontSize + 'px';
+        
+        // Apply to result matches
+        document.querySelectorAll('.result-match').forEach(el => {
+            el.style.fontSize = fontSize + 'px';
+        });
     }
     
     function showModal(modal) {
@@ -1046,7 +1140,10 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         
         // Show the modal
-        modal.classList.add('show');
+        modal.classList.remove('hidden');
+        setTimeout(() => {
+            modal.classList.add('show');
+        }, 10);
         
         // Add event listener to close on outside click
         setTimeout(() => {
@@ -1058,8 +1155,15 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function hideModal(modal) {
+        if (!modal) return;
+        
         modal.classList.remove('show');
         modal.removeEventListener('click', closeModalOnOutsideClick);
+        
+        // Wait for animation to complete before hiding
+        setTimeout(() => {
+            modal.classList.add('hidden');
+        }, 300);
         
         // Restore scrolling
         document.body.style.overflow = '';
@@ -1077,7 +1181,10 @@ document.addEventListener('DOMContentLoaded', function() {
         
         navigator.clipboard.writeText(path)
             .then(() => showToast('success', 'Copied!', `${path} copied to clipboard`))
-            .catch(() => showToast('error', 'Error', 'Failed to copy path'));
+            .catch(error => {
+                console.error('Copy failed:', error);
+                showToast('error', 'Error', 'Failed to copy path');
+            });
     }
     
     function showToast(type, title, message) {
@@ -1094,8 +1201,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 <i class="fas fa-${icon}"></i>
             </div>
             <div class="toast-content">
-                <div class="toast-title">${title}</div>
-                <div class="toast-message">${message}</div>
+                <div class="toast-title">${escapeHTML(title)}</div>
+                <div class="toast-message">${escapeHTML(message)}</div>
             </div>
             <button class="toast-close">
                 <i class="fas fa-times"></i>
@@ -1117,13 +1224,34 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function removeToast(toast) {
+        if (!toast || !toast.parentNode) return;
+        
         toast.classList.add('removing');
         setTimeout(() => {
-            toast.remove();
+            if (toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+            }
         }, 300);
     }
     
     function handleKeyboardShortcuts(e) {
+        // Don't trigger shortcuts when modals are open
+        if (document.querySelector('.modal.show')) return;
+        
+        // Focus search with / key
+        if (e.key === '/' && !isInputFocused()) {
+            e.preventDefault();
+            elements.searchQuery.focus();
+            return;
+        }
+        
+        // Show keyboard shortcuts with ? key
+        if (e.key === '?' && !isInputFocused()) {
+            e.preventDefault();
+            showModal(elements.keyboardShortcutsModal);
+            return;
+        }
+        
         // Command/Ctrl + / for keyboard shortcuts
         if ((e.metaKey || e.ctrlKey) && e.key === '/') {
             e.preventDefault();
@@ -1138,19 +1266,36 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        // Escape to close modal
+        // Escape to close modal or clear search
         if (e.key === 'Escape') {
             const openModal = document.querySelector('.modal.show');
             if (openModal) {
                 hideModal(openModal);
                 return;
+            } else if (document.activeElement === elements.searchQuery) {
+                clearSearch();
+                return;
             }
         }
         
-        // Command/Ctrl + K to focus search
-        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        // Command/Ctrl + S to save current search
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
             e.preventDefault();
-            elements.searchQuery.focus();
+            saveCurrentSearch();
+            return;
+        }
+        
+        // Command/Ctrl + L to toggle theme
+        if ((e.metaKey || e.ctrlKey) && e.key === 'l') {
+            e.preventDefault();
+            toggleTheme();
+            return;
+        }
+        
+        // Command/Ctrl + [ to toggle sidebar
+        if ((e.metaKey || e.ctrlKey) && e.key === '[') {
+            e.preventDefault();
+            toggleSidebar();
             return;
         }
         
@@ -1168,7 +1313,19 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    function isInputFocused() {
+        const activeElement = document.activeElement;
+        return activeElement.tagName === 'INPUT' || 
+               activeElement.tagName === 'TEXTAREA' || 
+               activeElement.tagName === 'SELECT' ||
+               activeElement.isContentEditable;
+    }
+    
     function formatDate(date) {
+        if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
+            return 'Invalid date';
+        }
+        
         const now = new Date();
         const diff = Math.floor((now - date) / 1000); // Difference in seconds
         
@@ -1191,3 +1348,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 day: 'numeric'
             });
         }
+    }
+    
+    // Add listener for system theme changes
+    if (window.matchMedia) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', event => {
+            if (appState.settings.theme === 'system') {
+                setTheme(event.matches ? 'dark' : 'light');
+            }
+        });
+    }
+});
